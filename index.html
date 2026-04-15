@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Winmar Construction — Bisnow Client Hub 2026</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f1f5f9; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spin { animation: spin 1s linear infinite; display: inline-block; }
+    .tab-active { border-bottom: 2px solid #fff; color: #fff !important; }
+    .tab-inactive { color: #94a3b8; border-bottom: 2px solid transparent; }
+    .tab-inactive:hover { color: #cbd5e1; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    // ── Replace with your deployed Apps Script URL after setup ──
+    const SCRIPT_URL = "https://script.google.com/a/macros/bisnow.com/s/AKfycbxyqeVZX6j9vR3zMkGjCHf-dNxo4hYdqd5iyb5j5ilgNXEi8EHUUfgTN7I4yfoLuUvA/exec";
+
+    // ── Dashboard URLs ──
+    const DASHBOARD_URL = "https://app.periscopedata.com/shared/28b582c1-bbb0-4107-ab31-81bede127c12?";
+    const CUSTOM_CONTENT_DASHBOARD_URL = "https://app.periscopedata.com/shared/db6bc339-66fd-4e60-ad43-7a8b307f2ac5?";
+
+    const TODAY = new Date();
+
+    // ── IMPORTANT: normalizeDate must be defined before getStatus and fmt ──
+    const normalizeDate = (val) => {
+      if (!val) return "";
+      if (typeof val === "string" && /^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
+      const d = new Date(val);
+      if (isNaN(d)) return "";
+      const y = d.getUTCFullYear();
+      const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+      const day = String(d.getUTCDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    };
+
+    const getStatus = (dateStr) =>
+      new Date(normalizeDate(dateStr) + "T12:00:00") < TODAY ? "past" : "upcoming";
+
+    const fmt = (dateStr) => {
+      const norm = normalizeDate(dateStr);
+      if (!norm) return "—";
+      return new Date(norm + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    };
+
+    const TYPE_META = {
+      "Digital":        { pillBg: "bg-blue-100",   text: "text-blue-700",   dot: "#3b82f6",  label: "Digital"        },
+      "Event":          { pillBg: "bg-purple-100",  text: "text-purple-700", dot: "#a855f7",  label: "Event"          },
+      "Ticket Credits": { pillBg: "bg-amber-100",   text: "text-amber-700",  dot: "#f59e0b",  label: "Ticket Credits" },
+      "Custom Content": { pillBg: "bg-green-100",   text: "text-green-700",  dot: "#22c55e",  label: "Custom Content" },
+    };
+
+    const INITIAL_PRODUCTS = [
+      { id: 11405653, name: "Office Repositioning — Panelist",                  type: "Event",          pub: "DC",       date: "2026-03-19", notes: "Event #9750" },
+      { id: 11405642, name: "DC Morning Brief — Sponsored Link",                 type: "Digital",        pub: "DC",       date: "2026-03-19", notes: "" },
+      { id: 11405643, name: "DC Morning Brief — Sponsored Link",                 type: "Digital",        pub: "DC",       date: "2026-03-31", notes: "" },
+      { id: 11405644, name: "DC Morning Brief — Sponsored Link",                 type: "Digital",        pub: "DC",       date: "2026-04-02", notes: "" },
+      { id: 11405645, name: "DC Morning Brief — Sponsored Link",                 type: "Digital",        pub: "DC",       date: "2026-04-14", notes: "" },
+      { id: 11405415, name: "Studio B Custom Content Article",                   type: "Custom Content", pub: "Studio B", date: "2026-04-16", notes: "" },
+      { id: 11405646, name: "DC Morning Brief — Sponsored Link",                 type: "Digital",        pub: "DC",       date: "2026-04-23", notes: "" },
+      { id: 11405654, name: "DC Region Hotels — Panelist",                       type: "Event",          pub: "DC",       date: "2026-05-14", notes: "Event #9764" },
+      { id: 11405657, name: "NOVA State of the Market — Verbal Commercial",      type: "Event",          pub: "Virginia", date: "2026-06-03", notes: "Event #9789" },
+      { id: 11405660, name: "BMAC East (Multifamily) — Verbal Commercial",       type: "Event",          pub: "DC",       date: "2026-12-10", notes: "Event #9776 · Signature" },
+    ].map(p => ({ ...p, status: getStatus(p.date) }));
+
+    const HAS_DASHBOARD          = INITIAL_PRODUCTS.some(p => p.type === "Digital" || p.type === "Custom Content") || !!DASHBOARD_URL;
+    const HAS_CUSTOM_CONTENT_TAB = !!CUSTOM_CONTENT_DASHBOARD_URL;
+    const HAS_ATTENDEES          = INITIAL_PRODUCTS.some(p => p.type === "Event");
+
+    // ── JSONP read from Sheets ──
+    const loadFromSheets = (setAllProducts, setAttendees, setSyncStatus) => {
+      if (!SCRIPT_URL) return;
+      setSyncStatus("loading");
+      const cbName = "cb_" + Date.now();
+      window[cbName] = (data) => {
+        delete window[cbName];
+        if (!data.success) { setSyncStatus("error"); return; }
+        const sheetsProds = data.products.map(p => {
+          const date = normalizeDate(p.date);
+          return { ...p, date, status: getStatus(date) };
+        });
+        const sheetsIds = new Set(sheetsProds.map(p => String(p.id)));
+        const builtIns = INITIAL_PRODUCTS.filter(p => !sheetsIds.has(String(p.id)));
+        setAllProducts([...builtIns, ...sheetsProds].sort((a, b) => new Date(a.date) - new Date(b.date)));
+        setAttendees(data.attendees || []);
+        setSyncStatus("idle");
+      };
+      const s = document.createElement("script");
+      s.src = SCRIPT_URL + "?callback=" + cbName;
+      s.onerror = () => { delete window[cbName]; setSyncStatus("error"); };
+      document.head.appendChild(s);
+    };
+
+    // ── Hidden iframe POST for writes ──
+    const iframePost = (payload) => new Promise((resolve) => {
+      const iframeId = "hf_" + Date.now();
+      const iframe   = document.createElement("iframe");
+      iframe.name    = iframeId;
+      iframe.style.display = "none";
+      document.body.appendChild(iframe);
+      const form   = document.createElement("form");
+      form.method  = "POST";
+      form.action  = SCRIPT_URL;
+      form.target  = iframeId;
+      const input  = document.createElement("input");
+      input.type   = "hidden";
+      input.name   = "payload";
+      input.value  = JSON.stringify(payload);
+      form.appendChild(input);
+      document.body.appendChild(form);
+      form.submit();
+      setTimeout(() => {
+        try { document.body.removeChild(iframe); document.body.removeChild(form); } catch(e) {}
+        resolve({ success: true });
+      }, 5000);
+      setTimeout(resolve, 2500);
+    });
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  ROOT APP
+    // ═══════════════════════════════════════════════════════════════════
+    function App() {
+      const [allProducts,    setAllProducts]    = React.useState(INITIAL_PRODUCTS);
+      const [attendees,      setAttendees]      = React.useState([]);
+      const [activeTab,      setActiveTab]      = React.useState("products");
+      const [filter,         setFilter]         = React.useState("all");
+      const [syncStatus,     setSyncStatus]     = React.useState("idle");
+      const [showAddModal,   setShowAddModal]   = React.useState(false);
+      const [newProduct,     setNewProduct]     = React.useState({ name:"", type:"Digital", pub:"", date:"", notes:"" });
+      const [editingProduct, setEditingProduct] = React.useState(null);
+      const fileInputRefs = React.useRef({});
+
+      React.useEffect(() => {
+        loadFromSheets(setAllProducts, setAttendees, setSyncStatus);
+      }, []);
+
+      // ── Stats ──
+      const total     = allProducts.length;
+      const completed = allProducts.filter(p => p.status === "past").length;
+      const upcoming  = allProducts.filter(p => p.status === "upcoming").length;
+
+      // ── Add product ──
+      const handleAddProduct = () => {
+        if (!newProduct.name || !newProduct.date) return;
+        const product = { ...newProduct, id: Date.now(), status: getStatus(newProduct.date) };
+        setAllProducts(prev => [...prev, product].sort((a, b) => new Date(a.date) - new Date(b.date)));
+        setShowAddModal(false);
+        setNewProduct({ name:"", type:"Digital", pub:"", date:"", notes:"" });
+        if (SCRIPT_URL) {
+          setSyncStatus("saving");
+          iframePost({ action: "addProduct", product }).then(() => setSyncStatus("idle")).catch(() => setSyncStatus("error"));
+        }
+      };
+
+      // ── Edit product ──
+      const handleEditSave = () => {
+        if (!editingProduct || !editingProduct.name || !editingProduct.date) return;
+        const updated = { ...editingProduct, status: getStatus(editingProduct.date) };
+        setAllProducts(prev =>
+          prev.map(p => String(p.id) === String(updated.id) ? updated : p)
+            .sort((a, b) => new Date(a.date) - new Date(b.date))
+        );
+        setEditingProduct(null);
+        if (SCRIPT_URL) {
+          setSyncStatus("saving");
+          iframePost({ action: "updateProduct", product: updated }).then(() => setSyncStatus("idle")).catch(() => setSyncStatus("error"));
+        }
+      };
+
+      // ── Attendee upload ──
+      const handleEventUpload = (eventId, eventName, file) => {
+        Papa.parse(file, {
+          header: true, skipEmptyLines: true,
+          complete: ({ data }) => {
+            const rows = data.map(r => ({
+              firstName: r["First Name"] || r["firstName"] || r["first_name"] || "",
+              lastName:  r["Last Name"]  || r["lastName"]  || r["last_name"]  || "",
+              company:   r["Company"]    || r["company"]   || "",
+              title:     r["Title"]      || r["title"]     || "",
+            }));
+            setAttendees(prev => [
+              ...prev.filter(a => (a.event || "").toLowerCase() !== eventName.toLowerCase()),
+              ...rows.map(r => ({ event: eventName, ...r }))
+            ]);
+            if (!SCRIPT_URL) return;
+            setSyncStatus("saving");
+            const CHUNK = 50;
+            const encoded = btoa(unescape(encodeURIComponent(JSON.stringify({ action: "clearEventAttendees", event: eventName }))));
+            const s = document.createElement("script");
+            s.src = SCRIPT_URL + "?data=" + encoded;
+            s.onload = s.onerror = () => {
+              document.head.removeChild(s);
+              const chunks = [];
+              for (let i = 0; i < rows.length; i += CHUNK) chunks.push(rows.slice(i, i + CHUNK));
+              chunks.reduce((p, chunk) => p.then(() => {
+                const enc2 = btoa(unescape(encodeURIComponent(JSON.stringify({ action: "appendAttendeesChunk", event: eventName, rows: chunk }))));
+                return new Promise((res) => {
+                  const s2 = document.createElement("script");
+                  s2.src = SCRIPT_URL + "?data=" + enc2;
+                  s2.onload = s2.onerror = () => { document.head.removeChild(s2); res(); };
+                  document.head.appendChild(s2);
+                });
+              }), Promise.resolve()).then(() => setSyncStatus("idle"));
+            };
+            document.head.appendChild(s);
+          }
+        });
+      };
+
+      const downloadAttendeesCsv = (eventName) => {
+        const rows = attendees.filter(a => (a.event || "").toLowerCase() === eventName.toLowerCase());
+        if (!rows.length) return;
+        const header = "First Name,Last Name,Company,Title\n";
+        const csv = header + rows.map(r => [r.firstName, r.lastName, r.company, r.title].map(v => `"${(v||"").replace(/"/g,'""')}"`).join(",")).join("\n");
+        const blob = new Blob([csv], { type: "text/csv" });
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement("a");
+        a.href = url; a.download = eventName.replace(/[^a-z0-9]/gi, "-") + "-attendees.csv";
+        a.click(); URL.revokeObjectURL(url);
+      };
+
+      // ── Filtered products ──
+      const filteredProducts = allProducts.filter(p =>
+        filter === "all" ? true : filter === "upcoming" ? p.status === "upcoming" : p.status === "past"
+      );
+
+      // ── Group by type ──
+      const grouped = {};
+      filteredProducts.forEach(p => {
+        if (!grouped[p.type]) grouped[p.type] = [];
+        grouped[p.type].push(p);
+      });
+      const typeOrder = ["Digital", "Custom Content", "Event", "Ticket Credits"];
+
+      // ── Tab list ──
+      const tabs = [
+        { id: "products",       label: "📋 Products"        },
+        { id: "timeline",       label: "📅 Timeline"        },
+        ...(HAS_DASHBOARD          ? [{ id: "dashboard",      label: "📊 Dashboard"       }] : []),
+        ...(HAS_CUSTOM_CONTENT_TAB ? [{ id: "custom-content", label: "✍️ Custom Content"  }] : []),
+        ...(HAS_ATTENDEES          ? [{ id: "attendees",      label: "👥 Attendees"       }] : []),
+      ];
+
+      return (
+        <div className="min-h-screen" style={{ background: "#f1f5f9" }}>
+
+          {/* ── HEADER ── */}
+          <div style={{ background: "#0A1628", padding: "24px 32px 0 32px" }}>
+            <div className="flex items-start justify-between flex-wrap gap-4">
+              {/* Left */}
+              <div>
+                <div className="text-xs font-semibold tracking-widest uppercase mb-1" style={{ color: "#64b5f6" }}>
+                  Bisnow Client Hub · 2026
+                </div>
+                <h1 className="text-3xl font-bold text-white mb-1">Winmar Construction</h1>
+                <p style={{ color: "#94a3b8", fontSize: "14px" }}>Campaign Progress Overview</p>
+              </div>
+              {/* Right — stat counters */}
+              <div className="flex gap-6 items-center">
+                {[
+                  { label: "Total Products", val: total,     color: "#fff"      },
+                  { label: "Completed",       val: completed, color: "#86efac"   },
+                  { label: "Upcoming",        val: upcoming,  color: "#93c5fd"   },
+                ].map(s => (
+                  <div key={s.label} className="text-center">
+                    <div className="text-3xl font-bold" style={{ color: s.color }}>{s.val}</div>
+                    <div className="text-xs mt-1" style={{ color: "#94a3b8" }}>{s.label}</div>
+                  </div>
+                ))}
+                {/* Sync indicator */}
+                <div className="ml-2">
+                  {syncStatus === "loading" && (
+                    <span className="flex items-center gap-1 text-xs" style={{ color: "#93c5fd" }}>
+                      <span className="spin" style={{ width:10, height:10, borderRadius:"50%", border:"2px solid #93c5fd", borderTopColor:"transparent", display:"inline-block" }}></span>
+                      Loading…
+                    </span>
+                  )}
+                  {syncStatus === "saving" && (
+                    <span className="flex items-center gap-1 text-xs" style={{ color: "#93c5fd" }}>
+                      <span className="spin" style={{ width:10, height:10, borderRadius:"50%", border:"2px solid #93c5fd", borderTopColor:"transparent", display:"inline-block" }}></span>
+                      Saving…
+                    </span>
+                  )}
+                  {syncStatus === "error" && (
+                    <span className="flex items-center gap-1 text-xs" style={{ color: "#fca5a5" }}>
+                      <span style={{ width:8, height:8, borderRadius:"50%", background:"#ef4444", display:"inline-block" }}></span>
+                      Sync error
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Tab nav */}
+            <div className="flex gap-0 mt-6" style={{ borderBottom: "none" }}>
+              {tabs.map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => setActiveTab(t.id)}
+                  className={`px-5 py-3 text-sm font-medium transition-all ${activeTab === t.id ? "tab-active" : "tab-inactive"}`}
+                  style={{ background: "none", border: "none", cursor: "pointer", borderBottom: activeTab === t.id ? "2px solid #fff" : "2px solid transparent" }}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* ── BODY ── */}
+          <div style={{ padding: "28px 32px" }}>
+
+            {/* ────────────────────────────────── PRODUCTS TAB ── */}
+            {activeTab === "products" && (
+              <div>
+                {/* Filter chips + Add button */}
+                <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
+                  <div className="flex gap-2">
+                    {[["all","All"],["upcoming","Upcoming"],["past","Completed"]].map(([val, label]) => (
+                      <button
+                        key={val}
+                        onClick={() => setFilter(val)}
+                        className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all ${filter === val ? "text-white" : "text-slate-500 bg-white border border-slate-200"}`}
+                        style={filter === val ? { background: "#0A1628", color: "#fff" } : {}}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => setShowAddModal(true)}
+                    className="px-4 py-2 rounded-lg text-sm font-semibold text-white flex items-center gap-1"
+                    style={{ background: "#0A1628" }}
+                  >
+                    + Add Product
+                  </button>
+                </div>
+
+                {/* Grouped tables */}
+                {typeOrder.filter(t => grouped[t] && grouped[t].length > 0).map(type => {
+                  const meta = TYPE_META[type] || TYPE_META["Digital"];
+                  return (
+                    <div key={type} className="mb-6 rounded-xl overflow-hidden shadow-sm" style={{ background: "#fff", border: "1px solid #e2e8f0" }}>
+                      {/* Group header */}
+                      <div className="flex items-center gap-3 px-5 py-3" style={{ borderBottom: "1px solid #e2e8f0", background: "#f8fafc" }}>
+                        <span style={{ width:10, height:10, borderRadius:"50%", background: meta.dot, display:"inline-block" }}></span>
+                        <span className={`text-xs font-bold uppercase tracking-widest ${meta.text}`}>{type}</span>
+                        <span className="ml-auto text-xs text-slate-400">{grouped[type].length} item{grouped[type].length !== 1 ? "s" : ""}</span>
+                      </div>
+                      {/* Table */}
+                      <table style={{ width:"100%", borderCollapse:"collapse" }}>
+                        <thead>
+                          <tr style={{ background:"#f8fafc", borderBottom:"1px solid #e2e8f0" }}>
+                            {["Date","Product","Market","Status",""].map((h,i) => (
+                              <th key={i} style={{ padding:"10px 16px", textAlign:"left", fontSize:12, fontWeight:600, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.05em", width: i===4?"40px":"auto" }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {grouped[type].map((p, idx) => (
+                            <tr key={p.id} style={{ opacity: p.status==="past" ? 0.6 : 1, borderBottom: idx < grouped[type].length-1 ? "1px solid #f1f5f9" : "none" }}>
+                              <td style={{ padding:"12px 16px", fontSize:14, color:"#374151", whiteSpace:"nowrap" }}>{fmt(p.date)}</td>
+                              <td style={{ padding:"12px 16px", fontSize:14, color:"#111827", fontWeight:500 }}>
+                                {p.name}
+                                {p.notes ? <span style={{ fontSize:11, color:"#94a3b8", marginLeft:8 }}>{p.notes}</span> : null}
+                              </td>
+                              <td style={{ padding:"12px 16px", fontSize:14, color:"#6b7280" }}>{p.pub || "—"}</td>
+                              <td style={{ padding:"12px 16px" }}>
+                                <span style={{
+                                  display:"inline-block", padding:"2px 10px", borderRadius:9999, fontSize:12, fontWeight:600,
+                                  background: p.status==="past" ? "#f1f5f9" : "#dbeafe",
+                                  color: p.status==="past" ? "#6b7280" : "#1d4ed8"
+                                }}>
+                                  {p.status==="past" ? "Completed" : "Upcoming"}
+                                </span>
+                              </td>
+                              <td style={{ padding:"12px 16px", textAlign:"center" }}>
+                                <button onClick={() => setEditingProduct({...p})} style={{ background:"none", border:"none", cursor:"pointer", color:"#94a3b8", fontSize:16 }} title="Edit">✏️</button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })}
+
+                {filteredProducts.length === 0 && (
+                  <div className="text-center py-12 text-slate-400">No products to display.</div>
+                )}
+              </div>
+            )}
+
+            {/* ────────────────────────────────── TIMELINE TAB ── */}
+            {activeTab === "timeline" && (
+              <div>
+                {/* Legend */}
+                <div className="flex gap-5 mb-6 flex-wrap">
+                  {Object.entries(TYPE_META).map(([type, meta]) => (
+                    allProducts.some(p => p.type === type) && (
+                      <div key={type} className="flex items-center gap-2">
+                        <span style={{ width:10, height:10, borderRadius:"50%", background:meta.dot, display:"inline-block" }}></span>
+                        <span className={`text-xs font-medium ${meta.text}`}>{meta.label}</span>
+                      </div>
+                    )
+                  ))}
+                </div>
+
+                {/* Monthly grid */}
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(200px, 1fr))", gap:12 }}>
+                  {Array.from({length:12}, (_,i) => {
+                    const monthDate = new Date(2026, i, 1);
+                    const monthName = monthDate.toLocaleDateString("en-US", { month:"long" });
+                    const monthProducts = allProducts.filter(p => {
+                      const d = new Date(normalizeDate(p.date) + "T12:00:00");
+                      return d.getFullYear() === 2026 && d.getMonth() === i;
+                    });
+                    const isPast = new Date(2026, i+1, 0) < TODAY;
+                    return (
+                      <div key={i} style={{
+                        background: isPast ? "#f8fafc" : "#fff",
+                        border: "1px solid #e2e8f0",
+                        borderRadius:12,
+                        padding:"14px 16px",
+                        opacity: isPast ? 0.7 : 1,
+                        minHeight: 90,
+                      }}>
+                        <div style={{ fontSize:13, fontWeight:700, color: isPast ? "#94a3b8" : "#1e293b", marginBottom:10 }}>{monthName}</div>
+                        {monthProducts.length === 0 ? (
+                          <div style={{ fontSize:11, color:"#cbd5e1" }}>—</div>
+                        ) : (
+                          <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
+                            {monthProducts.map(p => {
+                              const meta = TYPE_META[p.type] || TYPE_META["Digital"];
+                              return (
+                                <div key={p.id} style={{ display:"flex", alignItems:"center", gap:7 }}>
+                                  <span style={{ width:8, height:8, borderRadius:"50%", background:meta.dot, flexShrink:0, display:"inline-block" }}></span>
+                                  <span style={{ fontSize:11, color:"#374151", lineHeight:1.3 }}>
+                                    <span style={{ fontWeight:600, color:"#6b7280", marginRight:4 }}>{fmt(p.date)}</span>
+                                    {p.name}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* ────────────────────────────────── DASHBOARD TAB ── */}
+            {activeTab === "dashboard" && HAS_DASHBOARD && (
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h2 style={{ fontSize:18, fontWeight:700, color:"#1e293b", margin:0 }}>Digital Campaign Dashboard</h2>
+                    <p style={{ fontSize:13, color:"#64748b", marginTop:4 }}>Email & digital performance — powered by Periscope</p>
+                  </div>
+                  <a href={DASHBOARD_URL} target="_blank" rel="noreferrer"
+                    style={{ fontSize:13, color:"#1d4ed8", textDecoration:"none", fontWeight:500 }}>
+                    Open Full Dashboard ↗
+                  </a>
+                </div>
+                <div style={{ height:"calc(100vh - 220px)", borderRadius:12, overflow:"hidden", boxShadow:"0 1px 4px rgba(0,0,0,0.08)", border:"1px solid #e2e8f0" }}>
+                  <iframe
+                    src={DASHBOARD_URL}
+                    style={{ width:"100%", height:"100%", border:"none" }}
+                    title="Digital Campaign Dashboard"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* ────────────────────────────────── CUSTOM CONTENT TAB ── */}
+            {activeTab === "custom-content" && HAS_CUSTOM_CONTENT_TAB && (
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h2 style={{ fontSize:18, fontWeight:700, color:"#1e293b", margin:0 }}>Custom Content Dashboard</h2>
+                    <p style={{ fontSize:13, color:"#64748b", marginTop:4 }}>Studio B & branded content performance — powered by Periscope</p>
+                  </div>
+                  <a href={CUSTOM_CONTENT_DASHBOARD_URL} target="_blank" rel="noreferrer"
+                    style={{ fontSize:13, color:"#1d4ed8", textDecoration:"none", fontWeight:500 }}>
+                    Open Full Dashboard ↗
+                  </a>
+                </div>
+                {/* Custom Content product summary pill */}
+                <div style={{ display:"flex", gap:10, marginBottom:16, flexWrap:"wrap" }}>
+                  {allProducts.filter(p => p.type === "Custom Content").map(p => (
+                    <div key={p.id} style={{
+                      background:"#f0fdf4", border:"1px solid #86efac", borderRadius:20,
+                      padding:"6px 14px", fontSize:13, color:"#15803d", fontWeight:500,
+                      display:"flex", alignItems:"center", gap:6
+                    }}>
+                      <span style={{ width:7, height:7, borderRadius:"50%", background:"#22c55e", display:"inline-block" }}></span>
+                      {p.name} · {fmt(p.date)}
+                    </div>
+                  ))}
+                </div>
+                <div style={{ height:"calc(100vh - 260px)", borderRadius:12, overflow:"hidden", boxShadow:"0 1px 4px rgba(0,0,0,0.08)", border:"1px solid #e2e8f0" }}>
+                  <iframe
+                    src={CUSTOM_CONTENT_DASHBOARD_URL}
+                    style={{ width:"100%", height:"100%", border:"none" }}
+                    title="Custom Content Dashboard"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* ────────────────────────────────── ATTENDEES TAB ── */}
+            {activeTab === "attendees" && HAS_ATTENDEES && (
+              <div>
+                <p style={{ fontSize:13, color:"#64748b", marginBottom:20 }}>
+                  Upload a CSV for each event to track attendees. Re-uploading replaces the existing list.
+                </p>
+                {allProducts.filter(p => p.type === "Event").map(event => {
+                  const eventAttendees = attendees.filter(a => (a.event || "").toLowerCase() === event.name.toLowerCase());
+                  return (
+                    <div key={event.id} style={{ background:"#fff", border:"1px solid #e2e8f0", borderRadius:12, marginBottom:16, overflow:"hidden", boxShadow:"0 1px 3px rgba(0,0,0,0.04)" }}>
+                      {/* Card header */}
+                      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"14px 20px", borderBottom:"1px solid #f1f5f9", flexWrap:"wrap", gap:10 }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                          <span style={{ width:10, height:10, borderRadius:"50%", background: event.status==="past" ? "#94a3b8" : "#a855f7", display:"inline-block" }}></span>
+                          <span style={{ fontWeight:700, fontSize:15, color:"#1e293b" }}>{event.name}</span>
+                          <span style={{ fontSize:12, color:"#94a3b8" }}>{fmt(event.date)}</span>
+                          {event.notes ? <span style={{ fontSize:11, color:"#94a3b8" }}>{event.notes}</span> : null}
+                          {eventAttendees.length > 0 && (
+                            <span style={{ background:"#ede9fe", color:"#7c3aed", fontSize:11, fontWeight:700, padding:"2px 8px", borderRadius:20 }}>
+                              {eventAttendees.length} attendee{eventAttendees.length !== 1 ? "s" : ""}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ display:"flex", gap:8 }}>
+                          <input
+                            type="file"
+                            accept=".csv"
+                            ref={el => fileInputRefs.current[event.id] = el}
+                            style={{ display:"none" }}
+                            onChange={e => {
+                              if (e.target.files[0]) handleEventUpload(event.id, event.name, e.target.files[0]);
+                              e.target.value = "";
+                            }}
+                          />
+                          <button
+                            onClick={() => fileInputRefs.current[event.id] && fileInputRefs.current[event.id].click()}
+                            style={{ fontSize:12, fontWeight:600, padding:"6px 14px", borderRadius:8, border:"1px solid #e2e8f0", background:"#f8fafc", color:"#374151", cursor:"pointer" }}
+                          >
+                            📤 Upload CSV
+                          </button>
+                          {eventAttendees.length > 0 && (
+                            <button
+                              onClick={() => downloadAttendeesCsv(event.name)}
+                              style={{ fontSize:12, fontWeight:600, padding:"6px 14px", borderRadius:8, border:"1px solid #e2e8f0", background:"#f8fafc", color:"#374151", cursor:"pointer" }}
+                            >
+                              📥 Download CSV
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      {/* Attendee table */}
+                      {eventAttendees.length > 0 ? (
+                        <div style={{ maxHeight:300, overflowY:"auto" }}>
+                          <table style={{ width:"100%", borderCollapse:"collapse" }}>
+                            <thead style={{ position:"sticky", top:0, background:"#f8fafc" }}>
+                              <tr>
+                                {["First Name","Last Name","Company","Title"].map(h => (
+                                  <th key={h} style={{ padding:"8px 16px", textAlign:"left", fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.05em", borderBottom:"1px solid #e2e8f0" }}>{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {eventAttendees.map((a, i) => (
+                                <tr key={i} style={{ borderBottom: i < eventAttendees.length-1 ? "1px solid #f8fafc" : "none" }}>
+                                  <td style={{ padding:"9px 16px", fontSize:13, color:"#374151" }}>{a.firstName}</td>
+                                  <td style={{ padding:"9px 16px", fontSize:13, color:"#374151" }}>{a.lastName}</td>
+                                  <td style={{ padding:"9px 16px", fontSize:13, color:"#6b7280" }}>{a.company}</td>
+                                  <td style={{ padding:"9px 16px", fontSize:13, color:"#6b7280" }}>{a.title}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <div style={{ padding:"20px 20px", fontSize:13, color:"#94a3b8" }}>No attendees uploaded yet. Upload a CSV to get started.</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* ════════════════════════════ ADD PRODUCT MODAL ════════════ */}
+          {showAddModal && (
+            <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000 }}>
+              <div style={{ background:"#fff", borderRadius:16, padding:28, width:440, maxWidth:"95vw", boxShadow:"0 8px 32px rgba(0,0,0,0.18)" }}>
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20 }}>
+                  <h3 style={{ margin:0, fontSize:17, fontWeight:700, color:"#1e293b" }}>Add Product</h3>
+                  <button onClick={() => setShowAddModal(false)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:20, color:"#94a3b8" }}>×</button>
+                </div>
+                {[
+                  { label:"Product Name *", key:"name", type:"text", placeholder:"e.g. DC Morning Brief — Takeover" },
+                  { label:"Market / Publication", key:"pub", type:"text", placeholder:"e.g. DC, Virginia, Studio B" },
+                  { label:"Date *", key:"date", type:"date", placeholder:"" },
+                  { label:"Notes", key:"notes", type:"text", placeholder:"Optional" },
+                ].map(f => (
+                  <div key={f.key} style={{ marginBottom:14 }}>
+                    <label style={{ fontSize:12, fontWeight:600, color:"#374151", display:"block", marginBottom:5 }}>{f.label}</label>
+                    <input
+                      type={f.type}
+                      placeholder={f.placeholder}
+                      value={newProduct[f.key]}
+                      onChange={e => setNewProduct(p => ({...p, [f.key]: e.target.value}))}
+                      style={{ width:"100%", padding:"9px 12px", border:"1px solid #e2e8f0", borderRadius:8, fontSize:14, color:"#1e293b", boxSizing:"border-box" }}
+                    />
+                  </div>
+                ))}
+                <div style={{ marginBottom:20 }}>
+                  <label style={{ fontSize:12, fontWeight:600, color:"#374151", display:"block", marginBottom:5 }}>Type</label>
+                  <select
+                    value={newProduct.type}
+                    onChange={e => setNewProduct(p => ({...p, type: e.target.value}))}
+                    style={{ width:"100%", padding:"9px 12px", border:"1px solid #e2e8f0", borderRadius:8, fontSize:14, color:"#1e293b" }}
+                  >
+                    {Object.keys(TYPE_META).map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+                  <button onClick={() => setShowAddModal(false)} style={{ padding:"9px 18px", borderRadius:8, border:"1px solid #e2e8f0", background:"#f8fafc", color:"#374151", fontSize:14, cursor:"pointer", fontWeight:500 }}>Cancel</button>
+                  <button onClick={handleAddProduct} style={{ padding:"9px 20px", borderRadius:8, border:"none", background:"#0A1628", color:"#fff", fontSize:14, cursor:"pointer", fontWeight:600 }}>Save Product</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ════════════════════════════ EDIT PRODUCT MODAL ═══════════ */}
+          {editingProduct && (
+            <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000 }}>
+              <div style={{ background:"#fff", borderRadius:16, padding:28, width:440, maxWidth:"95vw", boxShadow:"0 8px 32px rgba(0,0,0,0.18)" }}>
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20 }}>
+                  <h3 style={{ margin:0, fontSize:17, fontWeight:700, color:"#1e293b" }}>Edit Product</h3>
+                  <button onClick={() => setEditingProduct(null)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:20, color:"#94a3b8" }}>×</button>
+                </div>
+                {[
+                  { label:"Product Name *", key:"name", type:"text", placeholder:"" },
+                  { label:"Market / Publication", key:"pub", type:"text", placeholder:"" },
+                  { label:"Date *", key:"date", type:"date", placeholder:"" },
+                  { label:"Notes", key:"notes", type:"text", placeholder:"" },
+                ].map(f => (
+                  <div key={f.key} style={{ marginBottom:14 }}>
+                    <label style={{ fontSize:12, fontWeight:600, color:"#374151", display:"block", marginBottom:5 }}>{f.label}</label>
+                    <input
+                      type={f.type}
+                      value={editingProduct[f.key] || ""}
+                      onChange={e => setEditingProduct(p => ({...p, [f.key]: e.target.value}))}
+                      style={{ width:"100%", padding:"9px 12px", border:"1px solid #e2e8f0", borderRadius:8, fontSize:14, color:"#1e293b", boxSizing:"border-box" }}
+                    />
+                  </div>
+                ))}
+                <div style={{ marginBottom:20 }}>
+                  <label style={{ fontSize:12, fontWeight:600, color:"#374151", display:"block", marginBottom:5 }}>Type</label>
+                  <select
+                    value={editingProduct.type}
+                    onChange={e => setEditingProduct(p => ({...p, type: e.target.value}))}
+                    style={{ width:"100%", padding:"9px 12px", border:"1px solid #e2e8f0", borderRadius:8, fontSize:14, color:"#1e293b" }}
+                  >
+                    {Object.keys(TYPE_META).map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+                  <button onClick={() => setEditingProduct(null)} style={{ padding:"9px 18px", borderRadius:8, border:"1px solid #e2e8f0", background:"#f8fafc", color:"#374151", fontSize:14, cursor:"pointer", fontWeight:500 }}>Cancel</button>
+                  <button onClick={handleEditSave} style={{ padding:"9px 20px", borderRadius:8, border:"none", background:"#0A1628", color:"#fff", fontSize:14, cursor:"pointer", fontWeight:600 }}>Save Changes</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App />);
+  </script>
+</body>
+</html>
